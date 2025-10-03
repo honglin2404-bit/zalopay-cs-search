@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Search, FileText, AlertCircle, Clock, Copy, CheckCircle } from 'lucide-react';
+import OpenAI from 'openai';
 
 export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -7,8 +8,15 @@ export default function App() {
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
+  const [useAI, setUseAI] = useState(true);
 
-  // Knowledge Base từ SOP files
+  // Initialize OpenAI
+  const openai = new OpenAI({
+    apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+    dangerouslyAllowBrowser: true // Chỉ dùng cho demo, production nên dùng backend
+  });
+
+  // Knowledge Base
   const knowledgeBase = [
     {
       id: 'v3003',
@@ -62,8 +70,34 @@ export default function App() {
     }
   ];
 
-  // Hàm tìm kiếm thông minh
-  const handleSearch = () => {
+  // AI-enhanced search
+  const enhanceQueryWithAI = async (query) => {
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "Bạn là trợ lý phân tích câu hỏi của CS ZaloPay. Nhiệm vụ: trích xuất từ khóa quan trọng từ câu hỏi để tìm kiếm trong knowledge base. Chỉ trả về các từ khóa, cách nhau bởi dấu phẩy, không giải thích."
+          },
+          {
+            role: "user",
+            content: `Câu hỏi: "${query}"\n\nTrích xuất từ khóa để search (bao gồm: mã lỗi, chủ đề, hành động):`
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 100
+      });
+
+      return response.choices[0].message.content.trim();
+    } catch (error) {
+      console.error('OpenAI Error:', error);
+      return query; // Fallback to original query
+    }
+  };
+
+  // Search function
+  const handleSearch = async () => {
     if (!searchQuery.trim()) {
       setSearchResults([]);
       return;
@@ -71,38 +105,51 @@ export default function App() {
 
     setIsSearching(true);
     
+    let searchTerms = searchQuery.toLowerCase().trim();
+    
+    // Use AI to enhance query if enabled
+    if (useAI && import.meta.env.VITE_OPENAI_API_KEY) {
+      try {
+        searchTerms = await enhanceQueryWithAI(searchQuery);
+        console.log('AI Enhanced Keywords:', searchTerms);
+      } catch (error) {
+        console.error('AI enhancement failed, using original query');
+      }
+    }
+
     setTimeout(() => {
-      const query = searchQuery.toLowerCase().trim();
-      
       const results = knowledgeBase
         .map(item => {
           let score = 0;
+          const terms = searchTerms.toLowerCase().split(/[,\s]+/).filter(t => t.length > 0);
           
-          // Tìm trong keywords
-          item.keywords.forEach(keyword => {
-            if (query.includes(keyword) || keyword.includes(query)) {
-              score += 10;
+          terms.forEach(term => {
+            // Search in keywords
+            item.keywords.forEach(keyword => {
+              if (keyword.includes(term) || term.includes(keyword)) {
+                score += 10;
+              }
+            });
+            
+            // Search in question
+            if (item.question.toLowerCase().includes(term)) {
+              score += 8;
             }
+            
+            // Search in answer
+            if (item.answer.toLowerCase().includes(term)) {
+              score += 5;
+            }
+            
+            // Search in error codes
+            item.errorCodes.forEach(code => {
+              if (code.toLowerCase().includes(term)) {
+                score += 15;
+              }
+            });
           });
           
-          // Tìm trong question
-          if (item.question.toLowerCase().includes(query)) {
-            score += 8;
-          }
-          
-          // Tìm trong answer
-          if (item.answer.toLowerCase().includes(query)) {
-            score += 5;
-          }
-          
-          // Tìm mã lỗi
-          item.errorCodes.forEach(code => {
-            if (query.includes(code.toLowerCase())) {
-              score += 15;
-            }
-          });
-          
-          // Filter theo scope
+          // Scope filter
           if (selectedScope !== 'all' && !item.scope.includes(selectedScope)) {
             score = 0;
           }
@@ -114,7 +161,7 @@ export default function App() {
       
       setSearchResults(results);
       setIsSearching(false);
-    }, 300);
+    }, 500);
   };
 
   const handleCopy = (text, id) => {
@@ -125,7 +172,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
-      {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between">
@@ -133,19 +179,27 @@ export default function App() {
               <h1 className="text-2xl font-bold text-gray-900">ZaloPay CS Knowledge Base</h1>
               <p className="text-sm text-gray-600 mt-1">Hệ thống tra cứu SOP & FAQ nhanh</p>
             </div>
-            <div className="text-sm text-gray-500">
-              {knowledgeBase.length} cases
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={useAI}
+                  onChange={(e) => setUseAI(e.target.checked)}
+                  className="rounded"
+                />
+                <span className="text-gray-700">AI Search</span>
+              </label>
+              <div className="text-sm text-gray-500">
+                {knowledgeBase.length} cases
+              </div>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        {/* Search Section */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
           <div className="space-y-4">
-            {/* Scope Filter */}
             <div className="flex gap-2 flex-wrap">
               {['all', 'Tài khoản', 'Dịch vụ', 'Travelling'].map(scope => (
                 <button
@@ -162,7 +216,6 @@ export default function App() {
               ))}
             </div>
 
-            {/* Search Input */}
             <div className="relative">
               <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
               <input
@@ -177,18 +230,18 @@ export default function App() {
 
             <button
               onClick={handleSearch}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors"
+              disabled={isSearching}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium py-3 rounded-lg transition-colors"
             >
-              Tìm kiếm
+              {isSearching ? 'Đang tìm kiếm...' : useAI ? 'Tìm kiếm với AI' : 'Tìm kiếm'}
             </button>
           </div>
         </div>
 
-        {/* Results */}
         {isSearching ? (
           <div className="text-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="text-gray-600 mt-4">Đang tìm kiếm...</p>
+            <p className="text-gray-600 mt-4">Đang tìm kiếm{useAI ? ' với AI' : ''}...</p>
           </div>
         ) : searchResults.length > 0 ? (
           <div className="space-y-4">
@@ -252,7 +305,7 @@ export default function App() {
           <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
             <AlertCircle size={48} className="mx-auto text-gray-400 mb-4" />
             <p className="text-gray-600">Không tìm thấy kết quả phù hợp</p>
-            <p className="text-sm text-gray-500 mt-2">Thử tìm kiếm với từ khóa khác</p>
+            <p className="text-sm text-gray-500 mt-2">Thử tìm kiếm với từ khóa khác hoặc bật AI Search</p>
           </div>
         ) : null}
       </main>
