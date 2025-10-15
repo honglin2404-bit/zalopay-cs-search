@@ -1,314 +1,703 @@
-import React, { useState } from 'react';
-import { Search, FileText, AlertCircle, Clock, Copy, CheckCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Search, User, History, Download, Copy, ExternalLink, Zap, ToggleLeft, ToggleRight, Brain } from 'lucide-react';
 import OpenAI from 'openai';
 
-export default function App() {
+// ResultCard Component
+const ResultCard = ({ result, templates, aiSearchEnabled, selectedChannel, copyTemplate, exportHistory }) => {
+  const [showAngry, setShowAngry] = useState(false);
+  
+  const defaultTemplate = {
+    neutral: {
+      inapp: `Zalopay đã ghi nhận vấn đề "${result.title}". Chúng tôi đang xử lý theo hướng dẫn: ${result.solution}`,
+      livechat: `Xin chào! Về vấn đề "${result.title}", chúng tôi sẽ hỗ trợ bạn theo quy trình: ${result.solution}`,
+      email: `Kính gửi quý khách,\n\nVề vấn đề: ${result.title}\n\nChúng tôi đang xử lý theo hướng dẫn.\n\nTrân trọng,\nTeam Zalopay CS`
+    },
+    angry: {
+      inapp: `Zalopay xin lỗi vì bạn gặp vấn đề này. Chúng tôi sẽ ưu tiên xử lý ngay cho bạn.`,
+      livechat: `Tôi hiểu bạn đang bức xúc. Để tôi ưu tiên hỗ trợ bạn ngay.`,
+      email: `Kính gửi quý khách,\n\nZalopay chân thành xin lỗi. Chúng tôi đang ưu tiên xử lý.\n\nTrân trọng,\nTeam Zalopay CS`
+    }
+  };
+  
+  const displayTemplates = templates || defaultTemplate;
+  
+  return (
+    <div className="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border-l-4 border-blue-500">
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex-1">
+          <div className="flex items-center gap-3 mb-2">
+            <h3 className="text-xl font-bold text-gray-800">
+              {result.errorCode}: {result.title}
+            </h3>
+            <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium">
+              {result.scope}
+            </span>
+            <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
+              {Math.round(result.matchScore || 0)}%
+            </span>
+          </div>
+          <div className="flex gap-2 text-sm text-gray-600">
+            <span>📦 {result.product}</span>
+            <span>•</span>
+            <span>🔧 {result.feature}</span>
+            <span>•</span>
+            <span className={result.severity?.includes('L1') ? 'text-red-600 font-medium' : 'text-gray-600'}>
+              ⚠️ {result.severity}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={() => exportHistory()}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition text-sm font-medium"
+        >
+          <Download size={16} />
+          Export
+        </button>
+        <a
+          href={result.sopLink}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition text-sm font-medium"
+        >
+          <ExternalLink size={16} />
+          Xem SOP gốc
+        </a>
+      </div>
+
+      <div className="bg-gray-50 rounded-lg p-4 mb-4 space-y-2 text-sm">
+        <p className="text-gray-700"><strong>🔍 Nguyên nhân:</strong> {result.cause}</p>
+        <p className="text-gray-700"><strong>✅ Hướng xử lý:</strong> {result.solution}</p>
+        {result.notes && <p className="text-gray-700"><strong>📝 Lưu ý:</strong> {result.notes}</p>}
+      </div>
+
+      {aiSearchEnabled && displayTemplates && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between bg-purple-50 rounded-lg p-3">
+            <span className="text-sm font-medium text-purple-800">
+              KH bức xúc?
+            </span>
+            <button
+              onClick={() => setShowAngry(!showAngry)}
+              className="flex items-center gap-2 text-purple-600 hover:text-purple-800"
+            >
+              {showAngry ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
+              <span className="text-sm font-medium">
+                {showAngry ? 'Bản calming' : 'Bản neutral'}
+              </span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className={`bg-green-50 rounded-lg p-4 border-2 ${!showAngry ? 'border-green-500' : 'border-transparent'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-green-800 flex items-center gap-2">
+                  😊 Template Neutral
+                </h4>
+                <button
+                  onClick={() => copyTemplate(displayTemplates.neutral[selectedChannel])}
+                  className="flex items-center gap-1 px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs font-medium"
+                >
+                  <Copy size={14} />
+                  Copy
+                </button>
+              </div>
+              <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">
+                {displayTemplates.neutral[selectedChannel]}
+              </pre>
+            </div>
+
+            <div className={`bg-orange-50 rounded-lg p-4 border-2 ${showAngry ? 'border-orange-500' : 'border-transparent'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-orange-800 flex items-center gap-2">
+                  😤→😌 Template Calming
+                </h4>
+                <button
+                  onClick={() => copyTemplate(displayTemplates.angry[selectedChannel])}
+                  className="flex items-center gap-1 px-3 py-1 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-xs font-medium"
+                >
+                  <Copy size={14} />
+                  Copy
+                </button>
+              </div>
+              <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">
+                {displayTemplates.angry[selectedChannel]}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between text-sm text-gray-500 pt-4 border-t border-gray-200 mt-4">
+        <span className="flex items-center gap-1">
+          📄 {result.sopFile}
+        </span>
+        <span>
+          📍 {result.sourceType}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+// Main App Component
+const App = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedScope, setSelectedScope] = useState('all');
   const [searchResults, setSearchResults] = useState([]);
+  const [currentUser, setCurrentUser] = useState('');
+  const [searchHistory, setSearchHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showUserSuggestions, setShowUserSuggestions] = useState(false);
+  const [learnedUsers, setLearnedUsers] = useState([]);
+  const [aiSearchEnabled, setAiSearchEnabled] = useState(true);
+  const [selectedChannel, setSelectedChannel] = useState('inapp');
   const [isSearching, setIsSearching] = useState(false);
-  const [copiedId, setCopiedId] = useState(null);
-  const [useAI, setUseAI] = useState(true);
+  
+  const [knowledgeBase, setKnowledgeBase] = useState([]);
+  const [templates, setTemplates] = useState({});
+  const [embeddings, setEmbeddings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  
+  const userInputRef = useRef(null);
+  const openaiRef = useRef(null);
 
-  // Initialize OpenAI
-  const openai = new OpenAI({
-    apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-    dangerouslyAllowBrowser: true // Chỉ dùng cho demo, production nên dùng backend
-  });
+  const WEBHOOK_URL = 'YOUR_GOOGLE_APPS_SCRIPT_WEBHOOK_URL';
+  const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY || 'YOUR_OPENAI_API_KEY';
 
-  // Knowledge Base
-  const knowledgeBase = [
-    {
-      id: 'v3003',
-      question: 'Mã lỗi -3003: Sai MAC',
-      answer: 'Nguyên nhân: Sai MAC (Message Authentication Code)\n\nHướng xử lý: Chuyển case cho group KM kiểm tra.\n\nĐây là lỗi hệ thống, không phải lỗi từ phía khách hàng.',
-      customerTemplate: 'Chào bạn,\n\nHệ thống ghi nhận có lỗi kỹ thuật khi xử lý voucher của bạn (Mã lỗi: -3003).\n\nZalopay đã ghi nhận và chuyển bộ phận kỹ thuật kiểm tra. Chúng tôi sẽ phản hồi kết quả trong vòng 24-48 giờ làm việc.\n\nRất xin lỗi vì sự bất tiện này.',
-      scope: 'Dịch vụ - KM',
-      source: 'ZION-CS-KM-D.07-Bảng mã lỗi Voucher',
-      errorCodes: ['-3003'],
-      keywords: ['voucher', 'mac', 'lỗi hệ thống', 'sai mac', '3003']
-    },
-    {
-      id: 'v3008',
-      question: 'Mã lỗi -3008: Voucher đã được sử dụng',
-      answer: 'Nguyên nhân: Voucher đã được sử dụng trước đó.\n\nHướng xử lý: CS kiểm tra xem User đã từng sử dụng voucher này ở giao dịch nào chưa?\n\nNếu đã dùng → Giải thích cho khách.\nNếu chưa dùng → Chuyển group KM xử lý.',
-      customerTemplate: 'Chào bạn,\n\nVoucher này đã được sử dụng trong giao dịch trước đó vào [ngày/giờ].\n\nMỗi voucher chỉ có thể sử dụng 1 lần. Vui lòng kiểm tra lại lịch sử giao dịch hoặc sử dụng voucher khác.',
-      scope: 'Dịch vụ - KM',
-      source: 'ZION-CS-KM-D.07-Bảng mã lỗi Voucher',
-      errorCodes: ['-3008'],
-      keywords: ['voucher', 'đã sử dụng', 'duplicate', '3008', 'trùng']
-    },
-    {
-      id: 'blacklist',
-      question: 'Xử lý tài khoản Blacklist',
-      answer: 'Risk Level: Malicious (Blacklist)\n\nĐịnh nghĩa: User cố tình lợi dụng chương trình khuyến mãi sai mục đích, tạo nhiều tài khoản ảo, hoặc có hành vi gian lận rõ ràng.\n\nHướng xử lý:\n1. TỪ CHỐI hoàn toàn yêu cầu\n2. KHÔNG cần báo cáo lên LINE\n3. Phản hồi khách hàng theo template chuẩn',
-      customerTemplate: 'Chào bạn,\n\nSau khi kiểm tra, chúng tôi nhận thấy tài khoản của bạn có dấu hiệu vi phạm điều khoản sử dụng dịch vụ Zalopay.\n\nTheo chính sách, chúng tôi không thể hỗ trợ yêu cầu này. Vui lòng tuân thủ điều khoản để tiếp tục sử dụng dịch vụ.',
-      scope: 'Dịch vụ - KM',
-      source: 'ZION-CS-KM-D.01-Quy trình xử lý',
-      errorCodes: [],
-      keywords: ['blacklist', 'gian lận', 'vi phạm', 'tài khoản ảo', 'lợi dụng']
-    },
-    {
-      id: 'greylist',
-      question: 'Xử lý tài khoản Greylist (Casual)',
-      answer: 'Risk Level: Casual (Greylist)\n\nĐịnh nghĩa: User có dấu hiệu lợi dụng KM nhưng chưa rõ ràng, hoặc vi phạm nhẹ.\n\nHướng xử lý:\n1. CHUYỂN case cho Line Leader đánh giá\n2. Line sẽ quyết định có hỗ trợ hay không\n3. Nếu được phê duyệt → Xử lý theo hướng dẫn\n4. Nếu từ chối → Phản hồi khách theo template',
-      customerTemplate: 'Chào bạn,\n\nYêu cầu của bạn đang được bộ phận chuyên trách xem xét. Chúng tôi sẽ phản hồi kết quả trong vòng 24-48 giờ làm việc.\n\nCảm ơn bạn đã kiên nhẫn chờ đợi.',
-      scope: 'Dịch vụ - KM',
-      source: 'ZION-CS-KM-D.01-Quy trình xử lý',
-      errorCodes: [],
-      keywords: ['greylist', 'casual', 'nghi ngờ', 'line leader', 'đánh giá']
-    },
-    {
-      id: 'cashback',
-      question: 'Khiếu nại chưa nhận Cashback',
-      answer: 'Bước 1: Kiểm tra điều kiện\n- Giao dịch đã hoàn thành chưa?\n- Có nằm trong thời gian KM không?\n- Đã đủ điều kiện tham gia chưa?\n\nBước 2: Check hệ thống\n- Vào tool kiểm tra trạng thái cashback\n- Xem log giao dịch\n\nBước 3: Xử lý\n- Nếu thiếu: Tạo ticket hoàn\n- Nếu không đủ điều kiện: Giải thích cho khách\n- Nếu lỗi hệ thống: Chuyển Tech',
-      customerTemplate: 'Chào bạn,\n\nSau khi kiểm tra, giao dịch của bạn [đã/chưa] đủ điều kiện nhận Cashback.\n\n[Nếu đủ điều kiện]: Chúng tôi đã tạo yêu cầu hoàn Cashback. Bạn sẽ nhận được trong vòng 24h.\n\n[Nếu không đủ]: Do [lý do cụ thể], giao dịch này chưa đủ điều kiện. Vui lòng tham khảo điều khoản KM.',
-      scope: 'Dịch vụ - KM',
-      source: 'ZION-CS-KM-D.02-Xử lý Cashback',
-      errorCodes: [],
-      keywords: ['cashback', 'hoàn tiền', 'chưa nhận', 'thiếu cashback']
-    }
+  const CS_AGENTS = [
+    'HongLNP', 'BaoNT9', 'CanhPQ', 'ChienNT', 'CuongNT10', 'HangPTV', 'HieuMTT', 
+    'HieuVNN', 'HuyBQ', 'LanDNT', 'NganNTB3', 'NhiHY3', 'ThangDQ7', 
+    'ThaoLNT', 'ThyLVM', 'ToanPB', 'TrucHNT2', 'AnhMH', 'DatNTT', 
+    'HaoVD', 'HieuTK3', 'KienNT', 'LinhHTM3', 'LinhLTT4', 'NhuTDQ', 
+    'PhungLM3', 'PhuongDTT', 'PhuongMBH', 'ThaoTTT14', 'TrangPTT6', 
+    'TranHH', 'TrinhNTT7', 'TuTNT', 'XuanNTT5', 'DaoVT', 'NhiNTT4', 
+    'ThaoNTP16', 'ThienNB', 'TuyenNTK2', 'VanPNH', 'VyDTT', 'AnNTH3', 
+    'ThamNTH3', 'BinhPLV', 'DuocNT', 'MinhVG', 'NgocNTN6', 'QueTN', 
+    'ThuHTM', 'ThuVA', 'QuiTP', 'MaiLTN', 'HuyGG', 'TuKT', 'YenDTH', 
+    'DoanPNK', 'QuyNP', 'QuyenTTT', 'TrinhNNV', 'TrangNTH', 'ThienLPM', 
+    'TrangHTT2'
   ];
 
-  // AI-enhanced search
-  const enhanceQueryWithAI = async (query) => {
-    try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: "Bạn là trợ lý phân tích câu hỏi của CS ZaloPay. Nhiệm vụ: trích xuất từ khóa quan trọng từ câu hỏi để tìm kiếm trong knowledge base. Chỉ trả về các từ khóa, cách nhau bởi dấu phẩy, không giải thích."
-          },
-          {
-            role: "user",
-            content: `Câu hỏi: "${query}"\n\nTrích xuất từ khóa để search (bao gồm: mã lỗi, chủ đề, hành động):`
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 100
-      });
+  const allUsers = [...new Set([...CS_AGENTS, ...learnedUsers])].sort();
+  const filteredSuggestions = allUsers.filter(agent =>
+    agent.toLowerCase().includes(currentUser.toLowerCase())
+  );
 
-      return response.choices[0].message.content.trim();
+  // Initialize OpenAI
+  useEffect(() => {
+    if (OPENAI_API_KEY && OPENAI_API_KEY !== 'YOUR_OPENAI_API_KEY') {
+      try {
+        openaiRef.current = new OpenAI({
+          apiKey: OPENAI_API_KEY,
+          dangerouslyAllowBrowser: true
+        });
+        console.log('✅ OpenAI initialized');
+      } catch (err) {
+        console.error('OpenAI init error:', err);
+      }
+    }
+  }, [OPENAI_API_KEY]);
+
+  // Load data from JSON files
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        
+        const kbResponse = await fetch('/data/knowledge_base.json');
+        if (!kbResponse.ok) throw new Error('Failed to load knowledge base');
+        const kbData = await kbResponse.json();
+        setKnowledgeBase(kbData);
+        
+        const templatesResponse = await fetch('/data/templates.json');
+        if (!templatesResponse.ok) throw new Error('Failed to load templates');
+        const templatesData = await templatesResponse.json();
+        setTemplates(templatesData);
+        
+        // Try to load pre-generated embeddings
+        try {
+          const embeddingsResponse = await fetch('/data/embeddings.json');
+          if (embeddingsResponse.ok) {
+            const embeddingsData = await embeddingsResponse.json();
+            setEmbeddings(embeddingsData);
+            console.log('✅ Loaded pre-generated embeddings');
+          }
+        } catch (e) {
+          console.log('No pre-generated embeddings found');
+        }
+        
+        setLoading(false);
+      } catch (err) {
+        console.error('Error loading data:', err);
+        setError(err.message);
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  // Load history & learned users
+  useEffect(() => {
+    const history = localStorage.getItem('searchHistory');
+    if (history) setSearchHistory(JSON.parse(history));
+    
+    const savedUsers = localStorage.getItem('learnedUsers');
+    if (savedUsers) setLearnedUsers(JSON.parse(savedUsers));
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (userInputRef.current && !userInputRef.current.contains(event.target)) {
+        setShowUserSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Cosine similarity calculation
+  const cosineSimilarity = (a, b) => {
+    const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
+    const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+    const magnitudeB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
+    return dotProduct / (magnitudeA * magnitudeB);
+  };
+
+  // OpenAI Semantic Search
+  const semanticSearch = async (query) => {
+    if (!openaiRef.current) {
+      console.error('OpenAI not initialized');
+      return fallbackSearch(query);
+    }
+
+    try {
+      setIsSearching(true);
+      
+      // Generate embedding for query
+      const queryEmbeddingResponse = await openaiRef.current.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: query,
+      });
+      
+      const queryEmbedding = queryEmbeddingResponse.data[0].embedding;
+      
+      // Calculate similarity with all cases
+      const results = knowledgeBase.map((item, idx) => {
+        let similarity = 0;
+        
+        if (embeddings[idx]) {
+          // Use pre-generated embeddings
+          similarity = cosineSimilarity(queryEmbedding, embeddings[idx]);
+        } else {
+          // Fallback to keyword matching
+          const combinedText = `${item.errorCode} ${item.title} ${item.cause} ${item.solution}`.toLowerCase();
+          const queryLower = query.toLowerCase();
+          const words = queryLower.split(/\s+/);
+          const matchCount = words.filter(word => combinedText.includes(word)).length;
+          similarity = matchCount / words.length;
+        }
+        
+        return {
+          ...item,
+          matchScore: similarity * 100
+        };
+      });
+      
+      // Filter and sort by similarity
+      const filtered = results
+        .filter(r => r.matchScore > 20)
+        .sort((a, b) => b.matchScore - a.matchScore);
+      
+      setIsSearching(false);
+      return filtered;
+      
     } catch (error) {
-      console.error('OpenAI Error:', error);
-      return query; // Fallback to original query
+      console.error('Semantic search error:', error);
+      setIsSearching(false);
+      return fallbackSearch(query);
     }
   };
 
-  // Search function
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
+  // Fallback search (multi-word keyword matching)
+  const fallbackSearch = (query) => {
+    const queryLower = query.toLowerCase().trim();
+    const words = queryLower.split(/\s+/).filter(w => w.length > 1);
+    
+    const results = knowledgeBase.map(item => {
+      const combinedText = `${item.errorCode} ${item.title} ${item.product} ${item.feature} ${item.cause} ${item.solution}`.toLowerCase();
+      
+      let score = 0;
+      let matchCount = 0;
+      
+      // Exact code match
+      if (item.errorCode.toLowerCase() === queryLower) {
+        return { ...item, matchScore: 100 };
+      }
+      
+      // Multi-word matching
+      words.forEach(word => {
+        if (item.errorCode.toLowerCase().includes(word)) {
+          score += 30;
+          matchCount++;
+        }
+        if (item.title.toLowerCase().includes(word)) {
+          score += 25;
+          matchCount++;
+        }
+        if (item.product.toLowerCase().includes(word)) {
+          score += 15;
+          matchCount++;
+        }
+        if (item.cause.toLowerCase().includes(word)) {
+          score += 10;
+          matchCount++;
+        }
+        if (item.solution.toLowerCase().includes(word)) {
+          score += 10;
+          matchCount++;
+        }
+      });
+      
+      // Bonus for multiple matches
+      if (matchCount > 1) {
+        score += matchCount * 5;
+      }
+      
+      return {
+        ...item,
+        matchScore: Math.min(score, 100)
+      };
+    });
+    
+    return results
+      .filter(r => r.matchScore > 0)
+      .sort((a, b) => b.matchScore - a.matchScore);
+  };
+
+  const sendLogToSheets = async (logData) => {
+    if (WEBHOOK_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEBHOOK_URL') {
+      console.log('Webhook chưa config, log local:', logData);
       return;
     }
+    try {
+      await fetch(WEBHOOK_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(logData)
+      });
+    } catch (error) {
+      console.error('Error sending log:', error);
+    }
+  };
 
-    setIsSearching(true);
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+
+    if (currentUser && !allUsers.includes(currentUser)) {
+      const updatedLearnedUsers = [...learnedUsers, currentUser];
+      setLearnedUsers(updatedLearnedUsers);
+      localStorage.setItem('learnedUsers', JSON.stringify(updatedLearnedUsers));
+    }
+
+    let results = [];
     
-    let searchTerms = searchQuery.toLowerCase().trim();
-    
-    // Use AI to enhance query if enabled
-    if (useAI && import.meta.env.VITE_OPENAI_API_KEY) {
-      try {
-        searchTerms = await enhanceQueryWithAI(searchQuery);
-        console.log('AI Enhanced Keywords:', searchTerms);
-      } catch (error) {
-        console.error('AI enhancement failed, using original query');
+    // Use semantic search if AI enabled and OpenAI available
+    if (aiSearchEnabled && openaiRef.current) {
+      results = await semanticSearch(searchQuery);
+      if (selectedScope !== 'all') {
+        results = results.filter(r => 
+          r.scope.toLowerCase().includes(selectedScope.toLowerCase())
+        );
+      }
+    } else {
+      results = fallbackSearch(searchQuery);
+      if (selectedScope !== 'all') {
+        results = results.filter(r => 
+          r.scope.toLowerCase().includes(selectedScope.toLowerCase())
+        );
       }
     }
 
-    setTimeout(() => {
-      const results = knowledgeBase
-        .map(item => {
-          let score = 0;
-          const terms = searchTerms.toLowerCase().split(/[,\s]+/).filter(t => t.length > 0);
-          
-          terms.forEach(term => {
-            // Search in keywords
-            item.keywords.forEach(keyword => {
-              if (keyword.includes(term) || term.includes(keyword)) {
-                score += 10;
-              }
-            });
-            
-            // Search in question
-            if (item.question.toLowerCase().includes(term)) {
-              score += 8;
-            }
-            
-            // Search in answer
-            if (item.answer.toLowerCase().includes(term)) {
-              score += 5;
-            }
-            
-            // Search in error codes
-            item.errorCodes.forEach(code => {
-              if (code.toLowerCase().includes(term)) {
-                score += 15;
-              }
-            });
-          });
-          
-          // Scope filter
-          if (selectedScope !== 'all' && !item.scope.includes(selectedScope)) {
-            score = 0;
-          }
-          
-          return { ...item, relevance: score };
-        })
-        .filter(item => item.relevance > 0)
-        .sort((a, b) => b.relevance - a.relevance);
-      
-      setSearchResults(results);
-      setIsSearching(false);
-    }, 500);
+    setSearchResults(results);
+
+    const newHistory = {
+      timestamp: new Date().toISOString(),
+      user: currentUser || 'Anonymous',
+      query: searchQuery,
+      scope: selectedScope,
+      resultsCount: results.length,
+      searchType: aiSearchEnabled && openaiRef.current ? 'semantic' : 'keyword'
+    };
+
+    const updatedHistory = [newHistory, ...searchHistory].slice(0, 15);
+    setSearchHistory(updatedHistory);
+    localStorage.setItem('searchHistory', JSON.stringify(updatedHistory));
+
+    sendLogToSheets({
+      ...newHistory,
+      topResult: results[0]?.title || 'No results'
+    });
   };
 
-  const handleCopy = (text, id) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+  const copyTemplate = (template) => {
+    navigator.clipboard.writeText(template);
+    alert('✅ Đã copy template!');
   };
+
+  const exportHistory = () => {
+    const csv = [
+      ['Thời gian', 'User', 'Từ khóa', 'Scope', 'Số kết quả', 'Loại search'],
+      ...searchHistory.map(h => [
+        new Date(h.timestamp).toLocaleString('vi-VN'),
+        h.user,
+        h.query,
+        h.scope,
+        h.resultsCount,
+        h.searchType || 'keyword'
+      ])
+    ].map(row => row.join(',')).join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `search-history-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 text-lg">Đang tải knowledge base...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center">
+        <div className="bg-white rounded-xl shadow-lg p-8 max-w-md">
+          <h2 className="text-2xl font-bold text-red-600 mb-4">⚠️ Lỗi tải dữ liệu</h2>
+          <p className="text-gray-700 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+          >
+            Thử lại
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
+      <div className="max-w-7xl mx-auto">
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">ZaloPay CS Knowledge Base</h1>
-              <p className="text-sm text-gray-600 mt-1">Hệ thống tra cứu SOP & FAQ nhanh</p>
+              <h1 className="text-3xl font-bold text-gray-800">
+                Zalopay CS Knowledge Base
+              </h1>
+              <p className="text-gray-600 text-sm mt-1">
+                {knowledgeBase.length} cases • OpenAI Semantic Search
+                {embeddings.length > 0 && ' • Embeddings Ready'}
+              </p>
             </div>
             <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={useAI}
-                  onChange={(e) => setUseAI(e.target.checked)}
-                  className="rounded"
-                />
-                <span className="text-gray-700">AI Search</span>
-              </label>
-              <div className="text-sm text-gray-500">
-                {knowledgeBase.length} cases
+              <button
+                onClick={() => setAiSearchEnabled(!aiSearchEnabled)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition ${
+                  aiSearchEnabled
+                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
+                    : 'bg-gray-200 text-gray-600'
+                }`}
+              >
+                {aiSearchEnabled ? <Brain size={18} fill="white" /> : <Brain size={18} />}
+                <span className="font-medium">AI Search</span>
+              </button>
+
+              <div className="relative">
+                <button
+                  onClick={() => setShowHistory(!showHistory)}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition"
+                >
+                  <History size={18} />
+                  <span className="font-medium">Lịch sử ({searchHistory.length})</span>
+                </button>
+                
+                {showHistory && (
+                  <div className="absolute right-0 mt-2 w-96 bg-white rounded-lg shadow-xl border max-h-96 overflow-y-auto z-10">
+                    <div className="p-3 border-b flex justify-between items-center">
+                      <span className="font-semibold">Lịch sử tìm kiếm</span>
+                      <button onClick={exportHistory} className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1">
+                        <Download size={14} />
+                        Export
+                      </button>
+                    </div>
+                    {searchHistory.length === 0 ? (
+                      <p className="p-4 text-gray-500 text-sm">Chưa có lịch sử</p>
+                    ) : (
+                      <div className="divide-y">
+                        {searchHistory.map((h, idx) => (
+                          <div key={idx} className="p-3 hover:bg-gray-50">
+                            <div className="flex justify-between text-sm">
+                              <span className="font-medium text-gray-800">"{h.query}"</span>
+                              <span className="text-gray-500">{h.resultsCount} kết quả</span>
+                            </div>
+                            <div className="flex gap-2 mt-1 text-xs text-gray-500">
+                              <span>{h.user}</span>
+                              <span>•</span>
+                              <span>{h.searchType || 'keyword'}</span>
+                              <span>•</span>
+                              <span>{new Date(h.timestamp).toLocaleString('vi-VN')}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              
+              <div className="relative" ref={userInputRef}>
+                <div className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg">
+                  <User size={18} />
+                  <input
+                    type="text"
+                    value={currentUser}
+                    onChange={(e) => {
+                      setCurrentUser(e.target.value);
+                      setShowUserSuggestions(true);
+                    }}
+                    onFocus={() => setShowUserSuggestions(true)}
+                    placeholder="Nhập tên CS..."
+                    className="bg-transparent font-medium outline-none w-32 placeholder-blue-400"
+                  />
+                </div>
+                
+                {showUserSuggestions && currentUser && filteredSuggestions.length > 0 && (
+                  <div className="absolute top-full mt-1 w-48 bg-white rounded-lg shadow-xl border max-h-48 overflow-y-auto z-20">
+                    {filteredSuggestions.map((agent, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => {
+                          setCurrentUser(agent);
+                          setShowUserSuggestions(false);
+                        }}
+                        className="w-full text-left px-4 py-2 hover:bg-blue-50 text-gray-700 text-sm font-medium"
+                      >
+                        {agent}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
-        </div>
-      </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-          <div className="space-y-4">
-            <div className="flex gap-2 flex-wrap">
-              {['all', 'Tài khoản', 'Dịch vụ', 'Travelling'].map(scope => (
-                <button
-                  key={scope}
-                  onClick={() => setSelectedScope(scope)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    selectedScope === scope
-                      ? 'bg-blue-600 text-white shadow-md'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {scope === 'all' ? 'Tất cả' : scope}
-                </button>
-              ))}
-            </div>
-
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                placeholder="Nhập từ khóa, mã lỗi, hoặc mô tả vấn đề..."
-                className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none text-base"
-              />
-            </div>
-
+          <div className="flex gap-3 mb-4">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              placeholder="Tìm kiếm mã lỗi, vấn đề, keywords... (VD: Nạp tiền tiết kiệm lỗi NFC)"
+              className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none text-lg"
+              disabled={isSearching}
+            />
             <button
               onClick={handleSearch}
               disabled={isSearching}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium py-3 rounded-lg transition-colors"
+              className="px-8 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition font-medium flex items-center gap-2 disabled:opacity-50"
             >
-              {isSearching ? 'Đang tìm kiếm...' : useAI ? 'Tìm kiếm với AI' : 'Tìm kiếm'}
+              {isSearching ? (
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                  Searching...
+                </>
+              ) : (
+                <>
+                  <Search size={20} />
+                  Tìm kiếm
+                </>
+              )}
             </button>
           </div>
-        </div>
 
-        {isSearching ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="text-gray-600 mt-4">Đang tìm kiếm{useAI ? ' với AI' : ''}...</p>
-          </div>
-        ) : searchResults.length > 0 ? (
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600">Tìm thấy {searchResults.length} kết quả</p>
-            {searchResults.map((result) => (
-              <div key={result.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
-                <div className="flex items-start justify-between mb-3">
-                  <h3 className="text-lg font-semibold text-gray-900">{result.question}</h3>
-                  <span className="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded-full">
-                    {result.scope}
-                  </span>
-                </div>
-
-                <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                  <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">{result.answer}</pre>
-                </div>
-
-                {result.customerTemplate && (
-                  <div className="border-t pt-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-sm font-semibold text-gray-700">Template phản hồi khách:</h4>
-                      <button
-                        onClick={() => handleCopy(result.customerTemplate, result.id + '-template')}
-                        className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
-                      >
-                        {copiedId === result.id + '-template' ? (
-                          <>
-                            <CheckCircle size={16} />
-                            Đã copy
-                          </>
-                        ) : (
-                          <>
-                            <Copy size={16} />
-                            Copy
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    <div className="bg-blue-50 rounded-lg p-4">
-                      <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">{result.customerTemplate}</pre>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-4 mt-4 text-xs text-gray-500">
-                  <span className="flex items-center gap-1">
-                    <FileText size={14} />
-                    {result.source}
-                  </span>
-                  {result.errorCodes.length > 0 && (
-                    <span className="flex items-center gap-1">
-                      <AlertCircle size={14} />
-                      {result.errorCodes.join(', ')}
-                    </span>
-                  )}
-                </div>
-              </div>
+          <div className="flex gap-2">
+            <span className="text-sm text-gray-600 py-2">Lọc theo:</span>
+            {['Tất cả', 'Khuyến mãi', 'Tiết kiệm', 'Risk'].map((scope) => (
+              <button
+                key={scope}
+                onClick={() => setSelectedScope(scope === 'Tất cả' ? 'all' : scope)}
+                className={`px-4 py-2 rounded-lg font-medium transition ${
+                  (scope === 'Tất cả' && selectedScope === 'all') || selectedScope.includes(scope.toLowerCase())
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {scope}
+              </button>
             ))}
           </div>
-        ) : searchQuery ? (
-          <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-            <AlertCircle size={48} className="mx-auto text-gray-400 mb-4" />
-            <p className="text-gray-600">Không tìm thấy kết quả phù hợp</p>
-            <p className="text-sm text-gray-500 mt-2">Thử tìm kiếm với từ khóa khác hoặc bật AI Search</p>
+
+          {aiSearchEnabled && searchResults.length > 0 && (
+            <div className="flex gap-2 mt-4 pt-4 border-t">
+              <span className="text-sm text-gray-600 py-2">Channel:</span>
+              {['inapp', 'livechat', 'email'].map((ch) => (
+                <button
+                  key={ch}
+                  onClick={() => setSelectedChannel(ch)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                    selectedChannel === ch
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  {ch === 'inapp' ? 'In-app' : ch === 'livechat' ? 'Live Chat' : 'Email'}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          {searchResults.map((result) => (
+            <ResultCard
+              key={result.id}
+              result={result}
+              templates={templates[result.errorCode]}
+              aiSearchEnabled={aiSearchEnabled}
+              selectedChannel={selectedChannel}
+              copyTemplate={copyTemplate}
+              exportHistory={exportHistory}
+            />
+          ))}
+        </div>
+
+        {searchQuery && searchResults.length === 0 && !isSearching && (
+          <div className="bg-white rounded-xl shadow-md p-12 text-center">
+            <p className="text-gray-500 text-lg">
+              Không tìm thấy kết quả cho "{searchQuery}"
+            </p>
+            <p className="text-gray-400 text-sm mt-2">
+              Thử tìm kiếm với từ khóa khác hoặc chọn scope khác
+            </p>
           </div>
-        ) : null}
-      </main>
+        )}
+      </div>
     </div>
   );
-}
+};
+
+export default App;
